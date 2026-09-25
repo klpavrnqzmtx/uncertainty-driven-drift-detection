@@ -1,0 +1,95 @@
+# MNIST-C benchmark — mixed abrupt/gradual corruption stream on a frozen
+# MC-Dropout LeNet trained on clean MNIST.
+#
+# Detector threshold strategy (key for Figure 2)
+# -----------------------------------------------
+# *Input-based* detectors (signal: mean_input) use permissive thresholds
+# so they fire at nearly every corruption boundary — even transitions that
+# do not degrade model accuracy (virtual drift).  This demonstrates the
+# core weakness of model-free drift monitoring.
+#
+# *Uncertainty-based* detectors (signal: mean_total / mean_epistemic) use
+# tighter thresholds calibrated to the actual entropy signal magnitude
+# (~0.3–0.5 nat swings at real drift points) so they fire selectively when
+# the model's predictive distribution genuinely shifts.
+#
+# *Supervised* detectors (DDM / EDDM) serve as an upper-bound reference
+# — they see per-sample correctness and should alarm first at real drifts.
+#
+# ADWIN is revived here with asymmetric deltas:
+#   - adwin_total:  delta=0.002  — conservative, fires at large entropy shifts
+#   - adwin_input:  delta=0.3    — permissive, saturates with false positives
+
+experiment: mnist_c
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: mnist_c
+  params:
+    # 6 × 24 pure batches + 2 × 12 gradual ramps = 168 batches total.
+    # Phases deliberately mix abrupt (identity→gaussian, rotate, impulse)
+    # and gradual (gaussian→motion, rotate→fog) edges so both detector
+    # styles are stress-tested.
+    schedule:
+      - {corruption: identity,       n_batches: 24}
+      - {corruption: gaussian_noise, n_batches: 24, transition: abrupt}
+      - {corruption: motion_blur,    n_batches: 24, transition: gradual, gradual_span: 12}
+      - {corruption: rotate,         n_batches: 24, transition: abrupt}
+      - {corruption: fog,            n_batches: 24, transition: gradual, gradual_span: 12}
+      - {corruption: impulse_noise,  n_batches: 24, transition: abrupt}
+    severity: 3
+    batch_size: 128
+    seed: 7
+    data_root: ./artifacts/mnist
+
+model:
+  name: lenet_mc_dropout
+  params:
+    n_samples: 30
+    p_drop: 0.5
+    data_root: ./artifacts/mnist
+    ckpt_path: ./artifacts/models/lenet_mc_p50_mnist.pt
+    pretrain_epochs: 2
+    pretrain_batch_size: 128
+    pretrain_lr: 0.001
+    pretrain_seed: 0
+    seed: 1
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised reference (upper-bound) ──────────────────────────────────
+  - name: ddm
+    params: {}
+  - name: eddm
+    params: {}
+
+  # ── PageHinkley (two-sided) ──────────────────────────────────────────────
+  # Uncertainty: threshold=2.0 → fires only at ≥0.15-nat mean shifts.
+  # Input:       threshold=0.03 → fires at tiny L2-stat shifts (~every edge).
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 2.0, min_instances: 10}
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.03, min_instances: 5}
+
+  # ── KSWIN ────────────────────────────────────────────────────────────────
+  # Uncertainty: alpha=0.005 → strict two-sample KS test.
+  # Input:       alpha=0.15  → nearly fires on any distributional wiggle.
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.005, window_size: 20, stat_size: 8}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.15,  window_size: 20, stat_size: 8}
+
+  # ── ADWIN (revived) ──────────────────────────────────────────────────────
+  # Uncertainty: delta=0.002 — tight; fires only when the adaptive window
+  #              detects a sustained entropy shift.
+  # Input:       delta=0.3   — loose; saturates with false positives on the
+  #              input L2 stat, illustrating ADWIN's sensitivity to any
+  #              distributional movement regardless of model impact.
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.002}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.3}

@@ -1,0 +1,99 @@
+# CIFAR-10 Known-vs-Novel experiment — MC-Dropout ResNet-20
+#
+# Model: ResNet-20 trained on CIFAR-10 with 10 known corruption types
+#        mixed in per mini-batch (p_drop=0.3, 30 epochs, SGD + cosine LR).
+# Stream: 10 known corruptions × 20 batches → 5 novel corruptions × 20 batches.
+# novel_start_batch = 200.
+#
+# Detectors:
+#   - Supervised (DDM, EDDM): use per-sample binary error rate.
+#   - Uncertainty-based (ADWIN, KSWIN, PH): each runs twice — once on
+#     mean_total (predictive entropy) and once on mean_epistemic (BALD MI).
+
+experiment: cifar_kn_comparison
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: cifar_known_novel
+  params:
+    known_corruptions:
+      - brightness
+      - contrast
+      - jpeg_compression
+      - shot_noise
+      - zoom_blur
+      - impulse_noise
+      - fog
+    novel_corruptions:
+      - glass_blur
+      - elastic_transform
+      - frost
+    n_batches_per_phase: 20
+    severity: 1
+    batch_size: 64
+    seed: 7
+    data_root: ./artifacts/cifar10
+
+model:
+  name: resnet_mc_dropout_cifar
+  params:
+    n_samples: 20
+    p_drop: 0.3
+    data_root: ./artifacts/cifar10
+    ckpt_path: ./artifacts/models/resnet20_cifar_kn_mc_v2.pt
+    train_corruptions:
+      - brightness
+      - contrast
+      - jpeg_compression
+      - shot_noise
+      - zoom_blur
+      - impulse_noise
+      - fog
+    corruption_severity: 1
+    clean_fraction: 0.25
+    pretrain_epochs: 100
+    pretrain_batch_size: 128
+    pretrain_lr: 0.1
+    pretrain_seed: 0
+    seed: 1
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised ────────────────────────────────────────────────────────────
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.0}
+
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.9}
+
+  # ── Uncertainty-based (epistemic MI) ──────────────────────────────────────
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.05}
+
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+
+  - name: page_hinkley
+    params: {delta: 0.003328, signal: mean_epistemic, name: ph_epistemic, threshold: 0.026622, min_instances: 10.0}
+
+  # ── Input-based (model-free P(X) drift; same 3 algorithms) ────────────────
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.3}
+
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.05, window_size: 20, stat_size: 8}
+
+  - name: page_hinkley
+    params: {delta: 0.018675, signal: mean_input, name: ph_input, threshold: 0.037349, min_instances: 5.0}
+
+  # ── Uncertainty-based (total predictive entropy) — placeholder, to be swept ─
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.0001}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.21142, delta: 0.026427, min_instances: 10.0}

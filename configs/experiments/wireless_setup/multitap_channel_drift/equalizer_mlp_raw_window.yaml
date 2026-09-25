@@ -1,0 +1,71 @@
+# QuaDRiGa multi-tap channel-drift — windowed-MLP equaliser + MC-Dropout.
+#
+# Same five-scenario escalating-drift stream and fixed 15 dB SNR as
+# channel_drift.yaml, but the receiver is a tapped-delay-line MLP: for each
+# symbol it sees a non-causal +/-W window of received samples (so it can
+# actually equalise the multi-tap channel, unlike the causal LSTM).  Trained on
+# both highway scenarios; evaluated on all five without retraining.
+
+experiment: quadriga_channel_drift_mlp
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: quadriga_channel_drift
+  params:
+    data_root: ./database/QuaDRiGa
+    scenarios: [highway_los, highway_nlosv, urban_los, urban_nlos, indoor_nlos]
+    train_scenario: [highway_los, highway_nlosv]
+    n_batches_per_scenario: 30
+    batch_size: 512
+    snr_db: 15.0
+    seed: 0
+
+model:
+  name: mlp_equalizer_mc_dropout
+  params:
+    data_root: ./database/QuaDRiGa
+    ckpt_path: ./artifacts/models/mlp_equalizer_highway_15db.pt
+    train_scenario: [highway_los, highway_nlosv]
+    window_radius: 8         # +/-8 samples -> 17-tap equaliser window
+    hidden: [128, 64]
+    p_drop: 0.3
+    n_samples: 20
+    snr_db: 15.0
+    pretrain_epochs: 15
+    pretrain_steps_per_epoch: 200
+    pretrain_batch_size: 512
+    pretrain_lr: 0.001
+    pretrain_seed: 0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 4.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.7}
+
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.095155, delta: 0.011894, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.2, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 1.0e-05}
+
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.282176, delta: 0.141088, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 1.0e-05}
+
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.396347, delta: 0.099087, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.2, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 1.0e-05}

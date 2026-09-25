@@ -1,0 +1,51 @@
+experiment: mnist_tasks_gradual
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: mnist_tasks
+  params:
+    schedule:
+      - {task: odd_even, n_batches: 40}
+      - {task: gt4,      n_batches: 40}
+      - {task: prime,    n_batches: 40}
+    transition: gradual
+    gradual_span: 15
+    batch_size: 128
+    seed: 7
+    data_root: ./artifacts/mnist
+
+model:
+  name: lenet_laplace
+  params:
+    initial_task: odd_even
+    prior_precision: 1.0
+    n_init_fit: 10000
+    refit_every: 0
+    window_size: 5000
+    max_newton_iter: 50
+    data_root: ./artifacts/mnist
+    ckpt_path: ./artifacts/models/lenet_mnist.pt
+    pretrain_epochs: 2
+    pretrain_seed: 0
+
+uncertainty:
+  name: laplace_mc
+  params:
+    n_samples: 50
+    seed: 1
+
+detectors:
+  - name: page_hinkley
+    params:
+      signal: mean_epistemic
+  - name: adwin
+    params:
+      signal: mean_epistemic
+  - name: kswin
+    params:
+      signal: mean_epistemic
+  - name: ddm
+    params: {}
+  - name: eddm
+    params: {}

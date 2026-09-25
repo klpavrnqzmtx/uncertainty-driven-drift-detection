@@ -1,0 +1,72 @@
+# CIFAR-100-C known-vs-novel — vit (laplace).
+experiment: cifar100_kn_vit_laplace
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: cifar100_known_novel
+  params:
+    # gaussian_noise and motion_blur are dropped from the STREAM: at severity 3 they
+    # dominate the known-phase error (RMSE 0.165 / 0.102 vs ~0.03-0.07 for the rest),
+    # which buries the known-vs-novel contrast. They stay in train_corruptions below,
+    # so the five shown here are still corruptions the model was trained on.
+    known_corruptions: [shot_noise, zoom_blur, brightness, contrast, jpeg_compression]
+    novel_corruptions:  [impulse_noise, defocus_blur, pixelate]
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 64
+    seed: 0
+    data_root: ./artifacts/cifar100
+
+model:
+  name: vit_b16_laplace
+  params:
+    n_classes: 100
+    dataset: cifar100
+    data_root: ./artifacts/cifar100
+    model_name: vit_base_patch16_224.augreg_in21k   # ImageNet-21k pretrained
+    image_size: 224
+    n_samples: 20
+    # Full fine-tune on CIFAR-100 (ViT transfer protocol: SGD+momentum, cosine,
+    # grad-clip 1.0) with the SAME known-corruption augmentation as the other arms.
+    freeze_backbone: false
+    finetune_epochs: 10
+    finetune_lr: 0.01
+    finetune_batch_size: 64
+    # Unchanged (all 7): the backbone stays trained on gaussian_noise/motion_blur,
+    # so no retrain is needed — they are simply not streamed.
+    train_corruptions: [gaussian_noise, shot_noise, motion_blur, zoom_blur, brightness, contrast, jpeg_compression]
+    corruption_severity: 3
+    clean_fraction: 0.2
+    fit_images: 2048
+    ckpt_path: ./artifacts/models/vit_b16_in21k_cifar100_laplace.pt
+    prior_precision: 1.0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.0}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.8}
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.12222, delta: 0.030555, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.1}
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.152111, delta: 0.076056, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.1}
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.057058, delta: 0.028529, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.0001}

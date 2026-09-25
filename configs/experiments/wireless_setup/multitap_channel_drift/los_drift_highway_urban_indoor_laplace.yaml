@@ -1,0 +1,77 @@
+# QuaDRiGa channel drift (LOS only) — train on Highway LOS, test on Urban then Indoor.
+# Laplace counterpart of los_drift_highway_urban_indoor_mc_dropout.yaml.
+#
+# Same single-layer LSTM backbone and LOS-only drift stream
+#   Highway LOS (reference) -> Urban LOS -> Indoor LOS
+# but with a deterministic MAP backbone and a diagonal Gauss-Newton posterior
+# over the Linear(64->4) head (20 posterior samples).  The drift of interest is
+# the transition into Urban (batch 30).  Same 15 dB SNR everywhere, taps used as
+# stored.  Detector thresholds are swept (min delay from the Urban transition).
+
+experiment: quadriga_los_drift_highway_urban_indoor_laplace
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: quadriga_channel_drift
+  params:
+    data_root: ./database/QuaDRiGa
+    scenarios: [highway_los, urban_los, indoor_los]
+    train_scenario: highway_los
+    n_batches_per_scenario: 30
+    batch_size: 512
+    snr_db: 15.0
+    seed: 0
+
+model:
+  name: rnn_equalizer_laplace
+  params:
+    data_root: ./database/QuaDRiGa
+    ckpt_path: ./artifacts/models/rnn_equalizer_highwaylos_15db_t40_map.pt
+    train_scenario: highway_los
+    hidden_size: 64
+    num_layers: 1            # simple single-layer LSTM, as in the beginning
+    n_samples: 20
+    prior_precision: 1.0
+    snr_db: 15.0
+    pretrain_epochs: 40      # well-trained recipe (cosine LR schedule)
+    pretrain_steps_per_epoch: 300
+    pretrain_batch_size: 512
+    pretrain_lr: 0.001
+    pretrain_seed: 0
+    laplace_fit_batches: 200
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # Placeholder thresholds — swept below with:
+  #   python scripts/sweep_detectors.py --config <this> \
+  #       --mode known_novel --select min_delay --apply-config <this>
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 4.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.7}
+
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.00241, delta: 0.000602, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.05}
+
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.153941, delta: 0.019243, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 1.0e-05}
+
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.285654, delta: 0.071414, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.2, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 1.0e-05}

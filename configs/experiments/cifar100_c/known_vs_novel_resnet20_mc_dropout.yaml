@@ -1,0 +1,83 @@
+# CIFAR-100-C known-vs-novel — ResNet-20 (mc_dropout).
+#
+# Capacity-ablation arm: same 270K-param ResNet-20 architecture as the CIFAR-10
+# arms (~135x fewer params than WRN-28-10, ~320x fewer than ViT-B/16), on the
+# SAME known/novel corruption protocol as the WRN-28-10/ViT-B/16 CIFAR-100
+# arms below — deliberately unchanged so this is a single-variable (backbone
+# capacity) comparison, not a confound of task difficulty and capacity at
+# once. Motivation: across the vision arms already in AUROC_FPR95.json, the
+# epistemic-vs-total AUROC gap is near zero regardless of size (MNIST/CIFAR-10
+# ResNet-20 and ViT alike) or forced to exactly zero by a ceiling effect
+# (CIFAR-100 ViT-B/16: both signals hit AUROC=1.0000) -- unlike audio, where
+# the gap reaches +0.40. Neither existing CIFAR-100 arm tests a genuinely
+# capacity-constrained backbone on the harder 100-way task, which is the
+# untested regime this arm targets.
+experiment: cifar100_kn_resnet20_mc_dropout
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: cifar100_known_novel
+  params:
+    # Identical to the WRN-28-10 / ViT-B/16 CIFAR-100 arms.
+    known_corruptions: [shot_noise, zoom_blur, brightness, contrast, jpeg_compression]
+    novel_corruptions:  [impulse_noise, defocus_blur, pixelate]
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 64
+    seed: 0
+    data_root: ./artifacts/cifar100
+
+model:
+  name: resnet20_cifar100_mc_dropout
+  params:
+    data_root: ./artifacts/cifar100
+    ckpt_path: ./artifacts/models/resnet20_cifar100_mc_dropout.pt
+    train_corruptions: [gaussian_noise, shot_noise, motion_blur, zoom_blur, brightness, contrast, jpeg_compression]
+    corruption_severity: 3
+    clean_fraction: 0.2
+    # Plain cosine schedule, no warmup/Nesterov/grad-clip: those were fixes
+    # for WRN-28-10's instability under heavy corruption augmentation at 36M
+    # params + full block dropout (see wide_resnet.py) — the same recipe that
+    # already trains CIFAR-10's ResNet-20 to ~90% known-phase accuracy works
+    # here unmodified; a 270K-param net has no comparable instability mode.
+    pretrain_epochs: 150
+    pretrain_batch_size: 128
+    pretrain_lr: 0.1
+    pretrain_seed: 0
+    n_samples: 20
+    p_drop: 0.3
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+# Placeholder thresholds copied from the WRN-28-10 arm's structure — these are
+# signal-scale-dependent (PageHinkley especially) and MUST be re-swept for
+# this arm specifically before trusting FAR/delay:
+#     python scripts/sweep_detectors.py --config <this file> --mode known_novel \
+#         --seeds 7,8,9 --target-far 0.05 --apply-config --out results/sweeps/cifar100_resnet20_mc
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.95}
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.032808, delta: 0.004101, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.01, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.3}
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.302982, delta: 0.075745, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.2, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.01}
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.057058, delta: 0.028529, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.2, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.0001}

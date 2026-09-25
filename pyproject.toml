@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uncertainty-driven-drift"
+version = "0.1.0"
+description = "Evaluation framework for epistemic uncertainty as an unsupervised proxy for posterior drift."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.25",
+  "pyyaml>=6.0",
+  "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+torch = [
+  "torch>=2.2",
+  "torchvision>=0.17",
+  "laplace-torch>=0.2.1",
+  # timm carries the ImageNet-21k ViT checkpoints (torchvision only ships IN-1k),
+  # used by the pretrained ViT-B/16 arms.
+  "timm>=1.0",
+  # ILSVRC/imagenet-1k on HuggingFace ships its val split as Parquet shards (not
+  # tar), needed by scripts/hf_imagenet_extract.py.
+  "pyarrow>=14",
+]
+drift = [
+  "river>=0.21",
+  "scipy>=1.11",
+  "scikit-learn>=1.3",
+]
+# The audio modality needs nothing beyond scipy: WAV decode, polyphase resample,
+# STFT and the mel filterbank are all implemented in-repo against scipy.signal
+# rather than pulling in torchaudio/librosa/soundfile. Listed separately from
+# `drift` so an audio-only install does not drag in river and sklearn.
+audio = [
+  "scipy>=1.11",
+]
+plot = [
+  "matplotlib>=3.8",
+  "pandas>=2.1",
+]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+uncertainty-driven-drift = "uncertainty_driven_drift.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

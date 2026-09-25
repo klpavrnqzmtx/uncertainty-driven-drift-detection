@@ -1,0 +1,122 @@
+# S2 on ResNet-20 — the ABLATION arm (no mixup).
+# Identical stream, but this backbone has never seen a blend, so blends are genuinely
+# NOVEL to it. Epistemic SHOULD fire here — that is the correct answer, and the point:
+# epistemic tracks the model's knowledge state, while total entropy fires either way
+# and so cannot distinguish 'novel' from 'merely ambiguous'.
+
+dataset:
+  name: cifar_known_ambiguous
+  params:
+    batch_size: 64
+    blend_lambdas:
+    - 0.8
+    - 0.7
+    - 0.6
+    data_root: ./artifacts/cifar10
+    known_corruptions:
+    - brightness
+    - contrast
+    - jpeg_compression
+    - shot_noise
+    - zoom_blur
+    - impulse_noise
+    - fog
+    n_batches_per_phase: 20
+    seed: 7
+    severity: 1
+detectors:
+- name: ddm
+  params:
+    drift_threshold: 2.0
+    warm_start: 8000
+- name: eddm
+  params:
+    alpha: 0.95
+    beta: 0.95
+    warm_start: 300
+- name: adwin
+  params:
+    delta: 0.3
+    name: adwin_epistemic
+    signal: mean_epistemic
+- name: kswin
+  params:
+    alpha: 0.005
+    name: kswin_epistemic
+    signal: mean_epistemic
+    stat_size: 8
+    window_size: 20
+- name: page_hinkley
+  params:
+    delta: 0.003273
+    min_instances: 10.0
+    name: ph_epistemic
+    signal: mean_epistemic
+    threshold: 0.052371
+- name: adwin
+  params:
+    delta: 0.3
+    name: adwin_total
+    signal: mean_total
+- name: kswin
+  params:
+    alpha: 0.005
+    name: kswin_total
+    signal: mean_total
+    stat_size: 8
+    window_size: 20
+- name: page_hinkley
+  params:
+    delta: 0.003273
+    min_instances: 10.0
+    name: ph_total
+    signal: mean_total
+    threshold: 0.052371
+- name: adwin
+  params:
+    delta: 0.3
+    name: adwin_input
+    signal: mean_input
+- name: kswin
+  params:
+    alpha: 0.2
+    name: kswin_input
+    signal: mean_input
+    stat_size: 8
+    window_size: 20
+- name: page_hinkley
+  params:
+    delta: 0.019242
+    min_instances: 5.0
+    name: ph_input
+    signal: mean_input
+    threshold: 0.038484
+experiment: cifar_ambiguity_resnet_nomixup
+model:
+  name: resnet_mc_dropout_cifar
+  params:
+    n_samples: 20
+    p_drop: 0.3
+    data_root: ./artifacts/cifar10
+    ckpt_path: ./artifacts/models/resnet20_cifar_nomixup_mc.pt
+    train_corruptions:
+    - brightness
+    - contrast
+    - jpeg_compression
+    - shot_noise
+    - zoom_blur
+    - impulse_noise
+    - fog
+    corruption_severity: 1
+    clean_fraction: 0.25
+    mixup_alpha: 0.0
+    pretrain_epochs: 60
+    pretrain_batch_size: 128
+    pretrain_lr: 0.1
+    pretrain_seed: 0
+    seed: 1
+output_dir: ./results/raw
+seed: 42
+uncertainty:
+  name: mc_dropout
+  params: {}

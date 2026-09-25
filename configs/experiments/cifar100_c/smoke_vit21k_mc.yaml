@@ -1,0 +1,37 @@
+# SMOKE — CIFAR-100 ViT-B/16 IN-21k, synthetic (no fine-tune), plumbing only.
+experiment: smoke_cifar100_vit21k_mc
+seed: 42
+output_dir: ./results/raw
+dataset:
+  name: cifar100_known_novel
+  params:
+    known_corruptions: [gaussian_noise, brightness]
+    novel_corruptions:  [impulse_noise]
+    n_batches_per_phase: 1
+    severity: 3
+    batch_size: 4
+    seed: 0
+    data_root: ./artifacts/cifar100
+model:
+  name: vit_b16_mc_dropout
+  params:
+    n_classes: 100
+    dataset: cifar100
+    data_root: ./artifacts/cifar100
+    model_name: vit_base_patch16_224.augreg_in21k
+    image_size: 224
+    n_samples: 2
+    p_drop: 0.1
+    synthetic: true          # skip the fine-tune; exercise load+preprocess+predict
+    ckpt_path: ""
+    seed: 0
+uncertainty:
+  name: mc_dropout
+  params: {}
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.0}
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.05, delta: 0.0125, min_instances: 5.0}
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.1, delta: 0.025, min_instances: 5.0}

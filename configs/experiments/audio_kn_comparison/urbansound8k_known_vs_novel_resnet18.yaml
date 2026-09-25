@@ -1,0 +1,117 @@
+# UrbanSound8K Known-vs-Novel — MC-Dropout ResNet-18 on log-mel (11.2 M params)
+#
+# THE arm that decides how the audio story gets written. On ESC-50, swapping the
+# 247 K CNN for this backbone left the epistemic-beats-total ORDERING intact
+# (AUROC 0.773 vs 0.648) but collapsed the margin: total entropy went from 0.538
+# (chance) to 0.648, because aleatoric flipped sign, -1.06 sigma under the CNN
+# against +0.56 sigma here. So on that dataset the dramatic result is a property
+# of the CNN family, not of the shift.
+#
+# UrbanSound8K and UrbanSound8K have only ever been run on the 247 K CNN, so it is
+# unknown whether their rows are equally backbone-sensitive. Until this runs, the
+# three-dataset table rests on one backbone per dataset.
+#
+# NOT pretrained, deliberately: "epistemically familiar" is defined relative to
+# the training set, and an ImageNet- or AudioSet-pretrained backbone has already
+# seen most of these acoustic conditions.
+
+experiment: audio_kn_urbansound8k_resnet18
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: audio_known_novel
+  params:
+    dataset: urbansound8k
+    split: val+test
+    # KNOWN PHASE IS A LEVEL-MATCHED SUBSET of train_corruptions.
+    #
+    # band_stop is still in train_corruptions below -- the backbone knows it -- but
+    # it is NOT streamed. Reason, measured on the TRAIN split with
+    # scripts/probe_corruptions.py (a split no stream draws from, so the choice is
+    # not circular): at severity 3 band_stop sits far above the other known
+    # corruptions in epistemic level (+0.120 vs +0.006..+0.048 on ESC-50; +0.057 vs
+    # +0.004..+0.027 on UrbanSound8K; +0.047 vs -0.002..+0.022 on Speech Commands).
+    # Streaming it put a real ~2.5 sigma level step inside the "known" phase, and
+    # every change detector fired at its block edges -- correctly, but the run then
+    # reported those as known-phase false alarms.
+    #
+    # Dropping it from the stream makes the known phase approximately stationary,
+    # which is what "in-distribution operation" is supposed to mean, and needs no
+    # retraining because the model still trained on it.
+    #
+    # Disclosed limitation: the retained known corruptions are on average EASIER
+    # than the novel three, so difficulty and novelty are entangled here as they
+    # are in any such design. The primary justification for the known/novel split
+    # remains mechanism (transient clicks, temporal gating, spectral warping are
+    # not producible by stationary noise, filtering, quantisation or reverb);
+    # level-matching is a secondary refinement for legibility.
+    known_corruptions:
+      - gaussian_noise
+      - pink_noise
+      - hum_noise
+      - lowpass
+      - quantization
+      - reverb
+    novel_corruptions:
+      - impulse_noise
+      - packet_loss
+      - pitch_shift
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 64
+    seed: 7
+    data_root: ./artifacts/audio/urbansound8k
+
+model:
+  name: audio_cnn_mc_dropout
+  params:
+    arch: resnet18
+    n_samples: 20
+    p_drop: 0.3
+    dataset: urbansound8k
+    data_root: ./artifacts/audio/urbansound8k
+    ckpt_path: ./artifacts/models/audio_resnet18_us8k_kn_mc.pt
+    train_corruptions:
+      - gaussian_noise
+      - pink_noise
+      - hum_noise
+      - lowpass
+      - band_stop
+      - quantization
+      - reverb
+    corruption_severity: 3
+    clean_fraction: 0.25
+    pretrain_epochs: 60
+    pretrain_batch_size: 128
+    pretrain_lr: 0.05
+    pretrain_seed: 0
+    seed: 1
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 4.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.95}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.3}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: page_hinkley
+    params: {delta: 0.001911, signal: mean_epistemic, name: ph_epistemic, threshold: 0.030579, min_instances: 10.0}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.05}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: page_hinkley
+    params: {delta: 0.026294, signal: mean_total, name: ph_total, threshold: 0.210351, min_instances: 10.0}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.1}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.2, window_size: 20, stat_size: 8}
+  - name: page_hinkley
+    params: {delta: 0.004965, signal: mean_input, name: ph_input, threshold: 0.019858, min_instances: 5.0}

@@ -1,0 +1,84 @@
+# ImageNet-C known-vs-novel — pretrained ViT-B/16 (laplace).
+# Setup mirrors the CIFAR ViT arm: known corruptions (calibrated) -> novel.
+# Backbone starts from the IN-21k->IN-1k timm checkpoint, then gets a SHORT
+# fine-tune on known-corruption-augmented ImageNet train images before being
+# frozen for eval — same as the CIFAR-100 ViT arm, and for the same reason:
+# without it, "known" and "novel" corruptions are equally unfamiliar to the
+# model (it was fine-tuned by timm's authors on clean ImageNet only), so the
+# known/novel contrast this whole protocol relies on doesn't hold. Needs BOTH
+# the val set (scripts/hf_imagenet_extract.py --split val, streamed for known/novel eval)
+# AND a train slice (scripts/hf_imagenet_extract.py --split train, fine-tuned on
+# only — never streamed, so fine-tuning can't leak into the eval images).
+experiment: imagenet_kn_vit_laplace
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: imagenet_known_novel
+  params:
+    # Same 5 known / 3 novel split as the CIFAR-100 arm, so the two scaling
+    # experiments share a protocol (gaussian_noise/motion_blur dominate the
+    # known-phase error at severity 3 and bury the contrast).
+    known_corruptions: [shot_noise, zoom_blur, brightness, contrast, jpeg_compression]
+    novel_corruptions:  [impulse_noise, defocus_blur, pixelate]
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 32
+    seed: 0
+    data_root: ./artifacts/imagenet/val
+    image_size: 224
+    max_pool: 4000
+
+model:
+  name: vit_b16_laplace
+  params:
+    n_classes: 1000
+    dataset: imagenet
+    model_name: vit_base_patch16_224.augreg_in21k_ft_in1k   # IN-21k pretrained, IN-1k fine-tuned
+    data_root: ./artifacts/imagenet/val
+    # Fine-tune-only data; see scripts/hf_imagenet_extract.py --split train. Never
+    # the same images the dataset.params.data_root stream above scores drift on.
+    train_data_root: ./artifacts/imagenet/train_slice
+    image_size: 224
+    n_samples: 20
+    fit_images: 1024
+    ckpt_path: ./artifacts/models/vit_b16_imagenet_finetuned_laplace.pt
+    # Same recipe as the CIFAR-100 ViT arm (SGD+momentum, cosine, grad-clip 1.0):
+    freeze_backbone: false
+    finetune_epochs: 10
+    finetune_lr: 0.01
+    finetune_batch_size: 64
+    finetune_images: 50000    # subsampled from the downloaded train slice
+    train_corruptions: [gaussian_noise, shot_noise, motion_blur, zoom_blur, brightness, contrast, jpeg_compression]
+    corruption_severity: 3
+    clean_fraction: 0.2
+    prior_precision: 1.0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.0}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.9}
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.05, delta: 0.0125, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.3}
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.1, delta: 0.025, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.3}
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.1, delta: 0.025, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.3}

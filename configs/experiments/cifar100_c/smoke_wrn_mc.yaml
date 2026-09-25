@@ -1,0 +1,40 @@
+# SMOKE — CIFAR-100 WRN-28-10 MC-Dropout, pretrain_epochs=0 (random init, plumbing only).
+experiment: smoke_cifar100_wrn_mc
+seed: 42
+output_dir: ./results/raw
+dataset:
+  name: cifar100_known_novel
+  params:
+    known_corruptions: [gaussian_noise, brightness]
+    novel_corruptions:  [impulse_noise]
+    n_batches_per_phase: 1
+    severity: 3
+    batch_size: 16
+    seed: 0
+    data_root: ./artifacts/cifar100
+model:
+  name: wrn2810_mc_dropout
+  params:
+    data_root: ./artifacts/cifar100
+    ckpt_path: ./artifacts/models/smoke_wrn2810_cifar100.pt
+    train_corruptions: [gaussian_noise, brightness]
+    corruption_severity: 3
+    clean_fraction: 0.5
+    pretrain_epochs: 0
+    pretrain_batch_size: 64
+    pretrain_lr: 0.1
+    n_samples: 3
+    p_drop: 0.3
+    seed: 0
+uncertainty:
+  name: mc_dropout
+  params: {}
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.0}
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.05, delta: 0.0125, min_instances: 5.0}
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.1, delta: 0.025, min_instances: 5.0}
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.1, delta: 0.025, min_instances: 5.0}

@@ -1,0 +1,92 @@
+# QuaDRiGa SNR-only drift — Urban LOS ONLY, single-layer LSTM (MC-Dropout).
+#
+# Simpler than snr_drift_urban_mc_dropout.yaml: one scenario throughout (no
+# channel-type change), pure SNR degradation.
+#
+#   Train: Urban LOS, SNR ~ U(18, 26) dB
+#   Known:  SNR 25 -> 15 dB, step 2, 20 batches/level = 6 levels x 20 = 120 batches
+#   Novel:  SNR 13 -> 11 dB, step 2, 20 batches/level = 2 levels x 20 = 40 batches
+#   160 batches total, novel_start_batch = 120.
+#
+#   NOTE: the known segment's last two levels (17, 15 dB) sit BELOW the trained
+#   floor of 18 dB — this variant deliberately pushes novel_start later than the
+#   train_spec range would suggest, to test whether detectors correctly stay
+#   quiet through that below-floor-but-still-"known" region rather than firing
+#   the moment SNR first leaves [18, 26]. (Original variant: novel_start=80,
+#   novel = 17->11 dB, i.e. novel exactly = below the trained floor.)
+#
+# NOTE on the schedule mechanics (src/uncertainty_driven_drift/components/quadriga_snr_drift.py):
+#   - the sweep counts DOWN from snr_start to snr_end INCLUSIVE (verified empirically:
+#     {snr_start: 25, snr_end: 19, snr_step: 2} -> levels [25, 23, 21, 19], 4 levels).
+#   - novel_start_batch is set to the START of the SECOND schedule-list entry, full stop; it
+#     has no idea what `train_spec` is. A single schedule segment would mark batch 0 as novel.
+#     Splitting into two segments here is what makes 120 the actual boundary.
+
+experiment: quadriga_snr_drift_urban_los_only
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: quadriga_snr_drift
+  params:
+    data_root: ./database/QuaDRiGa
+    batch_size: 512
+    seed: 0
+    schedule:
+      - {scenario: urban_los, snr_start: 25, snr_end: 15, snr_step: 2, blocks_per_snr: 20}
+      - {scenario: urban_los, snr_start: 13, snr_end: 11, snr_step: 2, blocks_per_snr: 20}
+
+model:
+  name: rnn_equalizer_snr_mc_dropout
+  params:
+    data_root: ./database/QuaDRiGa
+    ckpt_path: ./artifacts/models/rnn_equalizer_urban_los_snr_only.pt
+    train_spec:
+      - {scenario: urban_los, snr_min: 18, snr_max: 26}
+    hidden_size: 64
+    num_layers: 1
+    p_drop: 0.3
+    n_samples: 20
+    pretrain_epochs: 40
+    pretrain_steps_per_epoch: 300
+    pretrain_batch_size: 512
+    pretrain_lr: 0.001
+    pretrain_seed: 0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+# Full detector set (unswept placeholder thresholds — run scripts/sweep_wireless.sh
+# style calibration, or scripts/sweep_detectors.py directly, before trusting FAR/delay).
+detectors:
+  # ── Supervised (error stream) ────────────────────────────────────────────
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 4.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.7}
+
+  # ── Uncertainty-based: epistemic MI ──────────────────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.068965, delta: 0.008621, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 1.0e-05}
+
+  # ── Uncertainty-based: total predictive entropy ──────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.759948, delta: 0.094993, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 1.0e-05}
+
+  # ── Input-based (model-free P(X) baseline on received IQ) ────────────────
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.337421, delta: 0.084355, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 1.0e-05}

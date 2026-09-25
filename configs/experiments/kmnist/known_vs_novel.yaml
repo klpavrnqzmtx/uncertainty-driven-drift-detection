@@ -1,0 +1,70 @@
+# KMNIST (Kuzushiji-MNIST) known-vs-novel corruption experiment.
+#
+# KMNIST contains 28×28 grayscale images of 10 Japanese cursive (kuzushiji)
+# characters — substantially harder than MNIST (~95% LeNet accuracy) and
+# Fashion-MNIST.  The same known-vs-novel corruption protocol applies:
+# the model is pretrained on the four *known* corruptions and the stream
+# first presents those, then switches to three novel ones.
+#
+# Because KMNIST is harder, the base error on known corruptions will be
+# higher (~10–15%).  DDM/EDDM warm_start is set to match ~62 known-phase
+# batches as for MNIST, and the uncertainty thresholds are kept identical
+# since the entropy decomposition is scale-invariant in nats.
+
+experiment: kmnist_known_novel
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: kmnist_known_novel
+  params:
+    known_corruptions: [gaussian_noise, motion_blur, rotate, brightness]
+    novel_corruptions:  [impulse_noise, fog, translate]
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 128
+    seed: 7
+    data_root: ./artifacts/kmnist
+
+model:
+  name: lenet_mc_dropout
+  params:
+    n_samples: 30
+    p_drop: 0.5
+    dataset_name: kmnist
+    data_root: ./artifacts/kmnist
+    ckpt_path: ./artifacts/models/lenet_mc_p50_kmnist_known_corruptions.pt
+    pretrain_epochs: 10
+    pretrain_batch_size: 128
+    pretrain_lr: 0.001
+    pretrain_seed: 0
+    seed: 1
+    train_corruptions: [gaussian_noise, motion_blur, rotate, brightness]
+    corruption_severity: 3
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised ───────────────────────────────────────────────────────────
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 1.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.95}
+
+  # ── Uncertainty-based (tight thresholds — should be selective) ───────────
+  - name: page_hinkley
+    params: {delta: 0.006184, signal: mean_epistemic, name: ph_epistemic, threshold: 0.024735, min_instances: 10}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.3}
+
+  # ── Input-based (permissive thresholds — fires at every corruption edge) ──
+  - name: page_hinkley
+    params: {delta: 0.041626, signal: mean_input, name: ph_input, threshold: 0.083252, min_instances: 5}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.001}

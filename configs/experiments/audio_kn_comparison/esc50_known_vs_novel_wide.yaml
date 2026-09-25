@@ -1,0 +1,153 @@
+# ESC-50 Known-vs-Novel — MC-Dropout log-mel CNN, 6.4x wider (capacity control)
+#
+# S1 known-vs-novel, AUDIO modality. Structurally identical to
+# configs/experiments/cifar_kn_comparison/known_vs_novel.yaml so the modality is
+# the only thing that changes: 7 known corruptions x 20 batches, then 3 novel
+# x 20 batches, novel_start_batch = 140.
+#
+# Dataset: ESC-50 (Piczak 2015) — 50 environmental classes, 2,000 clips of 5 s; folds 1-3 train / 4 val / 5 test
+# Model:   log-mel CNN (245 K params, 4 conv stages + GAP), dropout p=0.3, trained on the
+#          7 known corruptions mixed in per mini-batch at severity 3
+#          (120 epochs, SGD + cosine, 25% of batches left clean).
+#
+# The known/novel split is by *mechanism*, not by strength: the novel three are
+# transient clicks, temporal gating and spectral warping — none of which the
+# training corruptions (stationary noise, linear filtering, quantisation, room
+# reverb) produce. A novel corruption that is merely a stronger version of a
+# known one tests nothing.
+#
+# Severity 3 means SNR = 20 dB for the additive families, the
+# AVRobustBench calibration (arXiv:2506.00358).
+#
+# Detectors: same algorithms, same knobs, three signals — epistemic (ours),
+# total entropy (UDD baseline), raw input summary (model-free baseline).
+# PageHinkley's threshold is signal-scale dependent and the values below are
+# INHERITED FROM THE CIFAR ARMS: sweep before quoting any PH number.
+#   python scripts/sweep_detectors.py --config configs/experiments/audio_kn_comparison/esc50_known_vs_novel.yaml \
+#          --mode known_novel --seeds 7,8,9 --target-far 0.05 --out results/sweeps/audio_esc50_mc_wide
+
+experiment: audio_kn_esc50_wide
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: audio_known_novel
+  params:
+    dataset: esc50
+    # val+test, not test: this dataset's test fold alone is small enough that a
+    # 200x64 stream redraws it >15 times and the known-phase sigma — the
+    # denominator of every shift we report — measures resampling noise instead of
+    # batch-to-batch variation. The backbone trains on the train folds only and
+    # uses no validation split, so val is just as unseen as test.
+    split: val+test
+    # KNOWN PHASE IS A LEVEL-MATCHED SUBSET of train_corruptions.
+    #
+    # band_stop is still in train_corruptions below -- the backbone knows it -- but
+    # it is NOT streamed. Reason, measured on the TRAIN split with
+    # scripts/probe_corruptions.py (a split no stream draws from, so the choice is
+    # not circular): at severity 3 band_stop sits far above the other known
+    # corruptions in epistemic level (+0.120 vs +0.006..+0.048 on ESC-50; +0.057 vs
+    # +0.004..+0.027 on UrbanSound8K; +0.047 vs -0.002..+0.022 on Speech Commands).
+    # Streaming it put a real ~2.5 sigma level step inside the "known" phase, and
+    # every change detector fired at its block edges -- correctly, but the run then
+    # reported those as known-phase false alarms.
+    #
+    # Dropping it from the stream makes the known phase approximately stationary,
+    # which is what "in-distribution operation" is supposed to mean, and needs no
+    # retraining because the model still trained on it.
+    #
+    # Disclosed limitation: the retained known corruptions are on average EASIER
+    # than the novel three, so difficulty and novelty are entangled here as they
+    # are in any such design. The primary justification for the known/novel split
+    # remains mechanism (transient clicks, temporal gating, spectral warping are
+    # not producible by stationary noise, filtering, quantisation or reverb);
+    # level-matching is a secondary refinement for legibility.
+    known_corruptions:
+      - gaussian_noise
+      - pink_noise
+      - hum_noise
+      - lowpass
+      - quantization
+      - reverb
+    novel_corruptions:
+      - impulse_noise
+      - packet_loss
+      - pitch_shift
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 64
+    seed: 7
+    data_root: ./artifacts/audio/esc50
+
+model:
+  name: audio_cnn_mc_dropout
+  params:
+    n_samples: 20
+    p_drop: 0.3
+    # 1.58 M params against the default 247 K. This arm exists to answer one
+    # question: is "total entropy is blind on ESC-50" a property of the shift, or
+    # an artifact of a 247 K network that only reaches 66% on a 50-way task? A
+    # bigger backbone should be more accurate and less hesitant, which lowers the
+    # known-phase entropy and gives total entropy room to move. If the effect
+    # survives that, capacity is not the explanation.
+    widths: [64, 128, 256, 512]
+    dataset: esc50
+    data_root: ./artifacts/audio/esc50
+    ckpt_path: ./artifacts/models/audio_cnn_esc50_kn_mc_wide.pt
+    train_corruptions:
+      - gaussian_noise
+      - pink_noise
+      - hum_noise
+      - lowpass
+      - band_stop
+      - quantization
+      - reverb
+    corruption_severity: 3
+    clean_fraction: 0.25
+    pretrain_epochs: 120
+    pretrain_batch_size: 128
+    pretrain_lr: 0.05
+    pretrain_seed: 0
+    seed: 1
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # -- Supervised (labels; the oracle these unsupervised signals are judged against)
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.5}
+
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.95}
+
+  # -- Uncertainty-based (epistemic MI) — ours
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.001}
+
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.01, window_size: 20, stat_size: 8}
+
+  - name: page_hinkley
+    params: {delta: 0.006854, signal: mean_epistemic, name: ph_epistemic, threshold: 0.109664, min_instances: 10.0}
+
+  # -- Total predictive entropy (UDD baseline)
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.05}
+
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.1, window_size: 20, stat_size: 8}
+
+  - name: page_hinkley
+    params: {delta: 0.05127, signal: mean_total, name: ph_total, threshold: 0.205078, min_instances: 10.0}
+
+  # -- Input-based (model-free P(X) drift; same 3 algorithms)
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.01}
+
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+
+  - name: page_hinkley
+    params: {delta: 0.006618, signal: mean_input, name: ph_input, threshold: 0.026472, min_instances: 5.0}

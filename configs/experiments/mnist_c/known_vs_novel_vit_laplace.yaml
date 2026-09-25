@@ -1,0 +1,106 @@
+# Known-vs-Novel MNIST-C experiment — Laplace ViT
+#
+# Architecture arm of the MNIST-C known-vs-novel benchmark. Everything except
+# the backbone is held fixed against known_vs_novel.yaml (LeNet-5): same stream,
+# same seed, same corruption split, same uncertainty estimator, same detectors.
+#
+# Model: the same CIFAR-scale ViT as the cifar_kn_comparison arm, adapted to the
+#        stream's shape — patch 4 over 1×28×28 gives 7×7=49 tokens, dim 192,
+#        depth 6, 3 heads, ~1.8M params. Trained FROM SCRATCH on MNIST with the
+#        same four known corruptions mixed in per mini-batch that the LeNet arm
+#        sees, so "known" means the same thing for both backbones.
+#
+#        clean_fraction is 0.0 here (not 0.25 as on CIFAR) to match the LeNet
+#        arm, whose _pretrain corrupts *every* mini-batch.
+#
+#        Trained WITHOUT dropout (p_drop=0.0), then a diagonal GGN posterior
+#        is fitted over the Linear(192 -> 10) head.
+#
+# NOTE ON DETECTOR THRESHOLDS: the page_hinkley `delta`/`threshold` values are
+# inherited from the LeNet arm, where they were swept against that model's
+# epistemic scale. Re-sweep for this backbone before reading anything into PH's
+# operating point:
+#   python scripts/sweep_detectors.py \
+#       --config configs/experiments/mnist_c/known_vs_novel_vit_laplace.yaml
+# ADWIN's delta and KSWIN's alpha are scale-free and port as-is.
+
+experiment: mnist_known_novel_vit_laplace
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: mnist_known_novel
+  params:
+    known_corruptions: [gaussian_noise, motion_blur, rotate, brightness]
+    novel_corruptions:  [impulse_noise, fog, translate]
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 128
+    seed: 7
+    data_root: ./artifacts/mnist
+
+model:
+  name: vit_laplace
+  params:
+    n_samples: 30
+    prior_precision: 1.0
+    dataset_name: mnist
+    data_root: ./artifacts/mnist
+    ckpt_path: ./artifacts/models/vit_mnist_kn_laplace.pt
+    patch_size: 4
+    dim: 192
+    depth: 6
+    n_heads: 3
+    mlp_ratio: 2.0
+    train_corruptions: [gaussian_noise, motion_blur, rotate, brightness]
+    corruption_severity: 3
+    clean_fraction: 0.0
+    # MNIST converges far faster than CIFAR; 50 epochs is ample for this ViT.
+    pretrain_epochs: 50
+    pretrain_batch_size: 128
+    pretrain_lr: 0.001
+    pretrain_weight_decay: 0.05
+    pretrain_warmup_epochs: 5
+    label_smoothing: 0.1
+    pretrain_seed: 0
+    seed: 1
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised ───────────────────────────────────────────────────────────
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 3.0}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.7}
+
+  # ── Uncertainty-based (epistemic MI) ─────────────────────────────────────
+  - name: page_hinkley
+    params: {delta: 0.000454, signal: mean_epistemic, name: ph_epistemic, threshold: 0.001817, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.3}
+
+  # ── Total predictive entropy (the UDD baseline) ────────────────────────────
+  # Added so the panel can show our signal against the baseline it is compared
+  # to. These runs previously logged mean_total as a COLUMN but never ran a
+  # detector on it, so the figure had no total-entropy row to draw.
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.3}
+
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.05, window_size: 20, stat_size: 8}
+
+  - name: page_hinkley
+    params: {delta: 0.005188, signal: mean_total, name: ph_total, threshold: 0.020751, min_instances: 10.0}
+
+  # ── Input-based (model-free P(X) baseline — backbone-independent) ────────
+  - name: page_hinkley
+    params: {delta: 0.038137, signal: mean_input, name: ph_input, threshold: 0.076275, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.001}

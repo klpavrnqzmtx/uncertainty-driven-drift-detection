@@ -1,0 +1,78 @@
+# QuaDRiGa channel drift — LOS vs NLOS (train on LOS, test on NLOS). MC-Dropout.
+#
+# Train the single-layer LSTM equaliser on the two line-of-sight channels
+# (Highway LOS + Urban LOS); evaluate the frozen receiver on a stream that drifts
+# from those LOS channels to the non-line-of-sight ones:
+#   Highway LOS -> Urban LOS  (in-distribution, LOS)  ||  drift boundary batch 60
+#   Highway NLOSv -> Urban NLOS  (novel, NLOS — diffuse, structurally different)
+# Same SNR (15 dB) everywhere, taps used as stored, so error rate and epistemic
+# uncertainty reflect the LOS->NLOS structural drift, not SNR/noise.
+#
+# Detector thresholds below are unswept placeholders.
+
+experiment: quadriga_los_vs_nlos_drift
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: quadriga_channel_drift
+  params:
+    data_root: ./database/QuaDRiGa
+    scenarios: [highway_los, urban_los, highway_nlosv, urban_nlos]
+    train_scenario: [highway_los, urban_los]
+    n_batches_per_scenario: 30
+    batch_size: 512
+    snr_db: 15.0
+    seed: 0
+
+model:
+  name: rnn_equalizer_mc_dropout
+  params:
+    data_root: ./database/QuaDRiGa
+    ckpt_path: ./artifacts/models/rnn_equalizer_los_15db.pt
+    train_scenario: [highway_los, urban_los]
+    hidden_size: 64
+    p_drop: 0.3
+    n_samples: 20
+    snr_db: 15.0
+    pretrain_epochs: 40
+    pretrain_steps_per_epoch: 300
+    pretrain_batch_size: 512
+    pretrain_lr: 0.001
+    pretrain_seed: 0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised (error stream) ────────────────────────────────────────────
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 4.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.8}
+
+  # ── Uncertainty-based: epistemic MI ──────────────────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.015868, delta: 0.007934, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 1.0e-05}
+
+  # ── Uncertainty-based: total predictive entropy ──────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.295671, delta: 0.073918, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.2, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 1.0e-05}
+
+  # ── Input-based (model-free P(X) baseline on received IQ) ────────────────
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.281713, delta: 0.070428, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 1.0e-05}

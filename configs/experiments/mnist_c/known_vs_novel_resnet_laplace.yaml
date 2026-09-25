@@ -1,0 +1,75 @@
+# MNIST known-vs-novel — ResNet-20 + diagonal last-layer Laplace, grayscale.
+#
+# Same backbone as known_vs_novel_resnet.yaml but trained without dropout for a
+# clean MAP estimate; a diagonal GGN posterior is fitted over the Linear(64→10)
+# head. CNN-depth comparison arm for the MNIST panels (LeNet-5 → ResNet-20).
+#
+# NOTE ON DETECTOR THRESHOLDS: page_hinkley delta/threshold are copied from the
+# other arms and must be re-swept for this backbone's epistemic scale (see
+# scripts/sweep_detectors.py). ADWIN delta / KSWIN alpha are scale-free.
+
+experiment: mnist_known_novel_resnet_laplace
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: mnist_known_novel
+  params:
+    known_corruptions: [gaussian_noise, motion_blur, rotate, brightness]
+    novel_corruptions:  [impulse_noise, fog, translate]
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 128
+    seed: 7
+    data_root: ./artifacts/mnist
+
+model:
+  name: resnet_laplace_mnist
+  params:
+    n_samples: 30
+    prior_precision: 1.0
+    data_root: ./artifacts/mnist
+    ckpt_path: ./artifacts/models/resnet20_mnist_kn_laplace.pt
+    train_corruptions: [gaussian_noise, motion_blur, rotate, brightness]
+    corruption_severity: 3
+    clean_fraction: 0.0
+    pretrain_epochs: 40
+    pretrain_batch_size: 128
+    pretrain_lr: 0.1
+    pretrain_seed: 0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised ───────────────────────────────────────────────────────────
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.7}
+
+  # ── Uncertainty-based (epistemic MI) ─────────────────────────────────────
+  - name: page_hinkley
+    params: {delta: 0.000805, signal: mean_epistemic, name: ph_epistemic, threshold: 0.00644, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.3}
+
+  # ── Input-based (model-free P(X) baseline — backbone-independent) ────────
+  - name: page_hinkley
+    params: {delta: 0.038137, signal: mean_input, name: ph_input, threshold: 0.076275, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.001}
+
+  # ── Uncertainty-based (total predictive entropy) — placeholder, to be swept ─
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.3}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.033663, delta: 0.004208, min_instances: 10.0}

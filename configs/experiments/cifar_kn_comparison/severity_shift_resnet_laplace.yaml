@@ -1,0 +1,72 @@
+# CIFAR-10 severity-shift — ResNet-20 + diagonal last-layer Laplace.
+#
+# Same severity-shift stream as severity_shift_resnet.yaml (known corruptions at
+# severity 1, the same corruptions at severity 3 in the novel phase), but with
+# the Laplace ResNet. Reuses resnet20_cifar_kn_laplace_v2 — no retraining.
+# Detectors run on epistemic MI AND total predictive entropy (+ input baseline).
+
+experiment: cifar_severity_shift_resnet_laplace
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: cifar_severity_shift
+  params:
+    corruptions: [brightness, contrast, jpeg_compression, shot_noise, zoom_blur, impulse_noise, fog]
+    known_severity: 1
+    novel_severity: 3
+    n_batches_per_phase: 20
+    batch_size: 64
+    seed: 7
+    data_root: ./artifacts/cifar10
+
+model:
+  name: resnet_laplace_cifar
+  params:
+    n_samples: 20
+    prior_precision: 1.0
+    data_root: ./artifacts/cifar10
+    ckpt_path: ./artifacts/models/resnet20_cifar_kn_laplace_v2.pt
+    train_corruptions: [brightness, contrast, jpeg_compression, shot_noise, zoom_blur, impulse_noise, fog]
+    corruption_severity: 1
+    clean_fraction: 0.25
+    pretrain_epochs: 100
+    pretrain_batch_size: 128
+    pretrain_lr: 0.1
+    pretrain_seed: 0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised ───────────────────────────────────────────────────────────
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.95}
+
+  # ── Uncertainty-based: epistemic MI ──────────────────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.006281, delta: 0.00157, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.3}
+
+  # ── Uncertainty-based: total predictive entropy ──────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.087059, delta: 0.021765, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.3}
+
+  # ── Input-based (model-free P(X) baseline) ───────────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.037349, delta: 0.018675, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.3}

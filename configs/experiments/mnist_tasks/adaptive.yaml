@@ -1,0 +1,58 @@
+experiment: mnist_tasks_adaptive
+seed: 42
+output_dir: ./results/raw
+
+# Same abrupt schedule as abrupt.yaml, but the last-layer Laplace is allowed
+# to refit periodically on a sliding window of recent stream batches. The
+# adaptation window covers ~16 batches of 128 samples, so the head has to
+# straddle the task boundary for several refits before the buffer is fully
+# populated with post-drift data. That's exactly when unsupervised epistemic
+# MI should spike — the posterior is being fit on contradictory labels for
+# the same digits, flattening the Laplace Hessian near the boundary.
+
+dataset:
+  name: mnist_tasks
+  params:
+    schedule:
+      - {task: odd_even, n_batches: 40}
+      - {task: gt4,      n_batches: 40}
+      - {task: prime,    n_batches: 40}
+    transition: abrupt
+    batch_size: 128
+    seed: 7
+    data_root: ./artifacts/mnist
+
+model:
+  name: lenet_laplace
+  params:
+    initial_task: odd_even
+    prior_precision: 1.0
+    n_init_fit: 10000
+    refit_every: 1        # refit every stream batch
+    window_size: 2048     # ~16 batches of 128 samples
+    max_newton_iter: 50
+    data_root: ./artifacts/mnist
+    ckpt_path: ./artifacts/models/lenet_mnist.pt
+    pretrain_epochs: 2
+    pretrain_seed: 0
+
+uncertainty:
+  name: laplace_mc
+  params:
+    n_samples: 50
+    seed: 1
+
+detectors:
+  - name: page_hinkley
+    params:
+      signal: mean_epistemic
+  - name: adwin
+    params:
+      signal: mean_epistemic
+  - name: kswin
+    params:
+      signal: mean_epistemic
+  - name: ddm
+    params: {}
+  - name: eddm
+    params: {}

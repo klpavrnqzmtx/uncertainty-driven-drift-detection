@@ -1,0 +1,73 @@
+# QuaDRiGa channel drift (LOS only) — train on Highway LOS, test on Urban then Indoor.
+#
+# Simple single-layer LSTM equaliser (as in the first channel-drift experiment).
+# Trained ONLY on Highway LOS, then the same frozen receiver is evaluated on a
+# LOS-only stream that drifts farther from the training distribution:
+#   Highway LOS (reference) -> Urban LOS -> Indoor LOS
+# The drift of interest is the transition into Urban (batch 30).  Same 15 dB SNR
+# everywhere, taps used as stored (no per-scenario renormalisation), so error
+# rate and epistemic uncertainty reflect channel-distribution drift.
+
+experiment: quadriga_los_drift_highway_urban_indoor
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: quadriga_channel_drift
+  params:
+    data_root: ./database/QuaDRiGa
+    scenarios: [highway_los, urban_los, indoor_los]
+    train_scenario: highway_los
+    n_batches_per_scenario: 30
+    batch_size: 512
+    snr_db: 15.0
+    seed: 0
+
+model:
+  name: rnn_equalizer_mc_dropout
+  params:
+    data_root: ./database/QuaDRiGa
+    ckpt_path: ./artifacts/models/rnn_equalizer_highwaylos_15db_t40.pt
+    train_scenario: highway_los
+    hidden_size: 64
+    num_layers: 1            # simple single-layer LSTM, as in the beginning
+    p_drop: 0.3
+    n_samples: 20
+    snr_db: 15.0
+    pretrain_epochs: 40      # well-trained recipe (cosine LR schedule)
+    pretrain_steps_per_epoch: 300
+    pretrain_batch_size: 512
+    pretrain_lr: 0.001
+    pretrain_seed: 0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 3.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.7}
+
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.018947, delta: 0.004737, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.005, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 1.0e-05}
+
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.100781, delta: 0.025195, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 1.0e-05}
+
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.285654, delta: 0.071414, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 1.0e-05}

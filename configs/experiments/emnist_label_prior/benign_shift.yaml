@@ -1,0 +1,103 @@
+# EMNIST label-prior drift — the BENIGN false-alarm scenario (S2-benign)
+#
+# The cleanest form of the claim. At batch 140 the class mix changes; the images, the
+# model, and the corruption families do not. The mix is solved so that mean ACCURACY is
+# pinned, so nothing has actually gone wrong:
+#
+#   total entropy  +3.35 sigma  -> adwin/kswin/ph_total   FIRE    <- FALSE ALARM
+#   epistemic      +0.17 sigma  -> adwin/kswin/ph_epistemic quiet <- CORRECT
+#   accuracy       +0.06 sigma  -> ddm/eddm                quiet  <- CORRECT
+#
+# Only the total-entropy detector gets it wrong. Verified on sampled batches:
+# accuracy 0.9036 -> 0.9059, R = 20.0.
+#
+# WHY EMNIST: the shift needs classes that are aleatorically ambiguous but epistemically
+# familiar. '1' collides with 'I'/'L' and '0' with 'O', so the glyph underdetermines the
+# label while the image stays utterly ordinary handwriting. Per-class aleatoric/epistemic
+# correlation is 0.359 here against 0.996 on CIFAR-10 — natural-image datasets have no
+# such structure.
+#
+# HOW ACCURACY STAYS PINNED: per-class entropy and accuracy correlate -0.885, not -1. That
+# slack lets a linear program mix high-entropy-but-accurate classes (1, 9, 0) with
+# high-accuracy ones (N, B, G, R, Y) so mean entropy rises while mean accuracy holds.
+#
+# RUN THE PRIOR DERIVATION FIRST — the stream refuses to start without it:
+#   python scripts/derive_benign_prior.py \
+#       --config configs/experiments/emnist_label_prior/benign_shift.yaml
+# It solves on a VALIDATION HOLDOUT, never the stream, which is what keeps this
+# non-circular.
+#
+# THRESHOLDS: the page_hinkley values below are placeholders carried over from the CIFAR
+# arms and are WRONG for this scale — EMNIST's known-phase total entropy is ~0.31 against
+# CIFAR's ~1.1. Re-sweep before quoting PH; the claim rests on ADWIN and KSWIN, whose knobs
+# are scale-free and identical across the three signals.
+
+experiment: emnist_benign_prior
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: emnist_label_prior
+  params:
+    prior_path: ./artifacts/models/emnist_benign_prior.json
+    # Dose-response staircase toward the solved prior, mirroring the 3 phases the other
+    # scenarios use after their boundary.
+    # Internal dose steps inside the single shift region; they show up in the curve
+    # without subdividing the region on the axis.
+    ramp: [0.34, 0.67, 1.0]
+    n_uniform_batches: 40      # baseline block; boundary at batch 40
+    n_shift_batches: 60        # 100 batches total
+    batch_size: 64
+    seed: 7
+    data_root: ./artifacts/emnist
+
+model:
+  name: resnet_mc_dropout_emnist
+  params:
+    n_samples: 20
+    p_drop: 0.3
+    data_root: ./artifacts/emnist
+    ckpt_path: ./artifacts/models/resnet20_emnist_mc.pt
+    val_fraction: 0.1          # held out of training; the prior is solved on it
+    split_seed: 0
+    pretrain_epochs: 20
+    pretrain_batch_size: 128
+    pretrain_lr: 0.1
+    pretrain_seed: 0
+    seed: 1
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised — should stay quiet, because accuracy does not move ────────
+  - name: ddm
+    params: {warm_start: 8000, drift_threshold: 2.0}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.95}
+
+  # ── Epistemic (ours) — should stay quiet ──────────────────────────────────
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.3}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.005, window_size: 20, stat_size: 8}
+  - name: page_hinkley
+    params: {delta: 0.003273, signal: mean_epistemic, name: ph_epistemic, threshold: 0.052371, min_instances: 10.0}
+
+  # ── Total entropy (UDD) — expected to FALSE-ALARM. Identical knobs to the
+  #    epistemic rows above, so any difference is the SIGNAL, not the detector.
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.3}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.005, window_size: 20, stat_size: 8}
+  - name: page_hinkley
+    params: {delta: 0.003273, signal: mean_total, name: ph_total, threshold: 0.052371, min_instances: 10.0}
+
+  # ── Input-based (model-free P(X)) — fires, as it always does ──────────────
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.3}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.2, window_size: 20, stat_size: 8}
+  - name: page_hinkley
+    params: {delta: 0.019242, signal: mean_input, name: ph_input, threshold: 0.038484, min_instances: 5.0}

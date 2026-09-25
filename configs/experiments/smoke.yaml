@@ -1,0 +1,27 @@
+# Smoke experiment: exercises the whole pipeline with built-in stubs.
+experiment: smoke
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: bernoulli_flip
+  params:
+    n_batches: 20
+    batch_size: 64
+    drift_fraction: 0.5
+    seed: 7
+
+model:
+  name: prior_classifier
+  params:
+    smoothing: 1.0
+
+uncertainty:
+  name: predictive_entropy
+  params: {}
+
+detectors:
+  - name: running_mean_error
+    params:
+      threshold: 1.8
+      warmup: 3

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.env
+
+# Downloaded data and model checkpoints (anchored: the package has its own results/ module)
+/artifacts/
+/database/
+
+# Everything the experiments write
+/results/
+/configs_backup_*/
+
+# OS
+.DS_Store

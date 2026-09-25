@@ -1,0 +1,102 @@
+# Camelyon17-WILDS hospital-level domain shift experiment.
+#
+# 5 hospitals (0-4) provide histopathology patches (96×96 RGB, binary label:
+# tumor / no tumor).  The model is pretrained on the WILDS train split
+# (hospitals 0-2) and frozen during streaming.  The stream presents
+# 30 batches from each known hospital (90 batches total) then 30 batches
+# from each novel hospital (60 batches, novel_start_batch=90).
+#
+# Expected detector behaviour
+# ---------------------------
+# Uncertainty-based : quiet during the known phase (model is calibrated
+#   on the same scanner / staining protocol); alarm after batch 90 when
+#   new scanner artifacts from hospitals 3-4 appear.
+# Input-based       : fires at each hospital boundary (different scanner
+#   characteristics change the raw pixel distribution at every transition).
+# Supervised        : alarms when tumor detection error rises, which should
+#   coincide with the novel-hospital onset if the model generalises poorly.
+#
+# Requirements
+# ------------
+# pip install wilds          # ≥ 2.0
+# First run downloads ~15 GB to ./artifacts/camelyon17/
+#
+# Model choice
+# ------------
+# Start with lenet_mc_dropout_rgb (adapted LeNet-5 for 96×96 RGB).
+# If accuracy on known hospitals stays below ~70%, switch to resnet_mc_dropout
+# (ResNet-18 fine-tuned from ImageNet weights) by changing model.name below.
+
+experiment: camelyon17_known_novel
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: camelyon17_known_novel
+  params:
+    known_hospitals: [0, 1, 2]
+    novel_hospitals: [3, 4]
+    n_batches_per_hospital: 30
+    batch_size: 64
+    num_workers: 4
+    seed: 7
+    data_root: ./artifacts/camelyon17
+
+model:
+  name: lenet_mc_dropout_rgb
+  params:
+    n_samples: 30
+    p_drop: 0.3
+    data_root: ./artifacts/camelyon17
+    ckpt_path: ./artifacts/models/lenet_rgb_camelyon17_h012.pt
+    known_hospitals: [0, 1, 2]
+    pretrain_epochs: 5
+    pretrain_batch_size: 64
+    pretrain_lr: 0.001
+    pretrain_seed: 0
+    num_workers: 4
+    seed: 1
+
+# Uncomment to use ResNet-18 instead of LeNet:
+# model:
+#   name: resnet_mc_dropout
+#   params:
+#     n_samples: 30
+#     p_drop: 0.3
+#     data_root: ./artifacts/camelyon17
+#     ckpt_path: ./artifacts/models/resnet_camelyon17_h012.pt
+#     known_hospitals: [0, 1, 2]
+#     pretrain_epochs: 5
+#     pretrain_batch_size: 64
+#     pretrain_lr: 0.0001
+#     pretrain_seed: 0
+#     pretrained_backbone: true
+#     num_workers: 4
+#     seed: 1
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+detectors:
+  # ── Supervised ───────────────────────────────────────────────────────────
+  - name: ddm
+    params: {warm_start: 5000, drift_threshold: 4.5}
+  - name: eddm
+    params: {warm_start: 300, beta: 0.9}
+
+  # ── Uncertainty-based (selective) ────────────────────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 2.0, min_instances: 10}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.001, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.00001}
+
+  # ── Input-based (permissive) ──────────────────────────────────────────────
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.03, min_instances: 5}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.15, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.3}

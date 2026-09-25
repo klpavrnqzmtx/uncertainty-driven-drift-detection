@@ -1,0 +1,77 @@
+# CIFAR-100-C known-vs-novel — ResNet-20 (laplace).
+#
+# Capacity-ablation arm: same 270K-param ResNet-20 architecture as the CIFAR-10
+# arms (~135x fewer params than WRN-28-10, ~320x fewer than ViT-B/16), on the
+# SAME known/novel corruption protocol as the WRN-28-10/ViT-B/16 CIFAR-100
+# arms below — deliberately unchanged so this is a single-variable (backbone
+# capacity) comparison, not a confound of task difficulty and capacity at
+# once. Motivation: across the vision arms already in AUROC_FPR95.json, the
+# epistemic-vs-total AUROC gap is near zero regardless of size (MNIST/CIFAR-10
+# ResNet-20 and ViT alike) or forced to exactly zero by a ceiling effect
+# (CIFAR-100 ViT-B/16: both signals hit AUROC=1.0000) -- unlike audio, where
+# the gap reaches +0.40. Neither existing CIFAR-100 arm tests a genuinely
+# capacity-constrained backbone on the harder 100-way task, which is the
+# untested regime this arm targets.
+experiment: cifar100_kn_resnet20_laplace
+seed: 42
+output_dir: ./results/raw
+
+dataset:
+  name: cifar100_known_novel
+  params:
+    # Identical to the WRN-28-10 / ViT-B/16 CIFAR-100 arms.
+    known_corruptions: [shot_noise, zoom_blur, brightness, contrast, jpeg_compression]
+    novel_corruptions:  [impulse_noise, defocus_blur, pixelate]
+    n_batches_per_phase: 20
+    severity: 3
+    batch_size: 64
+    seed: 0
+    data_root: ./artifacts/cifar100
+
+model:
+  name: resnet20_cifar100_laplace
+  params:
+    data_root: ./artifacts/cifar100
+    ckpt_path: ./artifacts/models/resnet20_cifar100_laplace.pt
+    train_corruptions: [gaussian_noise, shot_noise, motion_blur, zoom_blur, brightness, contrast, jpeg_compression]
+    corruption_severity: 3
+    clean_fraction: 0.2
+    # Plain cosine schedule, no warmup/Nesterov/grad-clip — see the mc_dropout
+    # sibling config for why (those were WRN-28-10-specific fixes).
+    pretrain_epochs: 150
+    pretrain_batch_size: 128
+    pretrain_lr: 0.1
+    pretrain_seed: 0
+    n_samples: 20
+    prior_precision: 1.0
+    seed: 0
+
+uncertainty:
+  name: mc_dropout
+  params: {}
+
+# Placeholder thresholds — re-sweep for this arm before trusting FAR/delay,
+# same as the mc_dropout sibling config.
+detectors:
+  - name: ddm
+    params: {warm_start: 200, drift_threshold: 2.5}
+  - name: eddm
+    params: {alpha: 0.95, warm_start: 300, beta: 0.95}
+  - name: page_hinkley
+    params: {signal: mean_epistemic, name: ph_epistemic, threshold: 0.206032, delta: 0.051508, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_epistemic, name: kswin_epistemic, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_epistemic, name: adwin_epistemic, delta: 0.001}
+  - name: page_hinkley
+    params: {signal: mean_total, name: ph_total, threshold: 0.196969, delta: 0.098484, min_instances: 10.0}
+  - name: kswin
+    params: {signal: mean_total, name: kswin_total, alpha: 0.05, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_total, name: adwin_total, delta: 0.3}
+  - name: page_hinkley
+    params: {signal: mean_input, name: ph_input, threshold: 0.057058, delta: 0.028529, min_instances: 5.0}
+  - name: kswin
+    params: {signal: mean_input, name: kswin_input, alpha: 0.1, window_size: 20, stat_size: 8}
+  - name: adwin
+    params: {signal: mean_input, name: adwin_input, delta: 0.0001}
